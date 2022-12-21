@@ -8,7 +8,7 @@ This code example demonstrates the PAS CO2 and SCD41 sensors with the RDK3.
 
 ## Requirements
 
-- [ModusToolbox® software](https://www.infineon.com/cms/en/design-support/tools/sdk/modustoolbox-software/) v2.4
+- [ModusToolbox® software](https://www.infineon.com/cms/en/design-support/tools/sdk/modustoolbox-software/) v3.0
 
 ### Using the code example with a ModusToolbox IDE:
 

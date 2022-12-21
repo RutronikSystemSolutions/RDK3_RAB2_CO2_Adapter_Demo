@@ -37,18 +37,8 @@
 #include "cybsp.h"
 #include "cy_pdl.h"
 
+extern I2C_scb3;
 
-/*PSoC62 Global Variables*/
-//cyhal_i2c_t i2c_scb3_obj;
-//extern cyhal_i2c_t cyhal_i2c;
-//cyhal_i2c_cfg_t i2c_scb1_cfg =
-//{
-//		.is_slave = false,
-//	    .address = 0,
-//	    .frequencyhal_hz = 100000UL,
-//};
-//
-//cy_rslt_t result = CY_RSLT_SUCCESS;
 /*
  * INSTRUCTIONS
  * ============
@@ -78,14 +68,9 @@ int16_t sensirion_i2c_hal_select_bus(uint8_t bus_idx) {
  * Initialize all hard- and software components that are needed for the I2C
  * communication.
  */
-void sensirion_i2c_hal_init(void) {
-
-
-	   // result = cyhal_i2c_init(&cyhal_i2c, CYBSP_I2C_SDA, CYBSP_I2C_SCL, NULL);
-	   // CY_ASSERT(result == CY_RSLT_SUCCESS);
-	    // result = cyhal_i2c_init(&cyhal_i2c, PIN_XENSIV_PASCO2_I2C_SDA, PIN_XENSIV_PASCO2_I2C_SCL, NULL);
-
-
+void sensirion_i2c_hal_init(void)
+{
+	return;
 }
 
 /**
@@ -106,9 +91,8 @@ void sensirion_i2c_hal_free(void) {
  * @returns 0 on success, error code otherwise
  */
 
-void sensirion_i2c_hal_sleep_usec(uint32_t useconds) {
-   // /* TODO:IMPLEMENT */
-
+void sensirion_i2c_hal_sleep_usec(uint32_t useconds)
+{
 	if(useconds <= 0xFFFF)
 		{
 			CyDelayUs((uint16_t)useconds);
@@ -117,4 +101,14 @@ void sensirion_i2c_hal_sleep_usec(uint32_t useconds) {
 		{
 			CyDelay(useconds/1000);
 		}
+}
+
+int8_t sensirion_i2c_hal_read(uint8_t address, uint8_t* data, uint16_t count)
+{
+	return (int8_t)cyhal_i2c_master_read(&I2C_scb3,(uint16_t)address, data, count, 100, true);
+}
+
+int8_t sensirion_i2c_hal_write(uint8_t address, const uint8_t* data, uint16_t count)
+{
+	return (int8_t)cyhal_i2c_master_write(&I2C_scb3,(uint16_t)address, data, count, 100, true);
 }

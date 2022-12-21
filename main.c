@@ -1,17 +1,16 @@
-
 /******************************************************************************
 * File Name:   main.c
 *
-* Description: This is the source code for RDK2 Rutronik development kit Application
-*              for ModusToolbox.
+* Description: This is the source code for the RDK3_RAB2_CO2_Adapter_Demo
+*              Application for ModusToolbox.
 *
-*
-*  Created on: 2022-08-24
-*  Company: Rutronik Elektronische Bauelemente GmbH
-*  Address: Jonavos g. 30, Kaunas 44262, Lithuania
-*  Authors: IUS, GDR
 * Related Document: See README.md
 *
+*
+*  Created on: 2022-12-21
+*  Company: Rutronik Elektronische Bauelemente GmbH
+*  Address: Jonavos g. 30, Kaunas 44262, Lithuania
+*  Author: GDR
 *
 *******************************************************************************
 * (c) 2019-2021, Cypress Semiconductor Corporation. All rights reserved.
@@ -52,163 +51,159 @@
 * any liability of Rutronik is insofar excluded
 *******************************************************************************/
 
-#include "scd4x/scd4x_i2c.h"
-#include "scd4x/sensirion_common.h"
-#include "scd4x/sensirion_i2c_hal.h"
+/*******************************************************************************
+* Header Files
+*******************************************************************************/
 #include "cy_pdl.h"
 #include "cyhal.h"
 #include "cybsp.h"
 #include "cy_retarget_io.h"
 #include "xensiv_pasco2_mtb.h"
-
+#include "scd4x_i2c.h"
+#include "sensirion_common.h"
+#include "sensirion_i2c_hal.h"
 
 #define CYBSP_I2C_SCL ARDU_SCL
 #define CYBSP_I2C_SDA ARDU_SDA
-
 #define CYBSP_DEBUG_UART_TX KITPROG_TX
 #define CYBSP_DEBUG_UART_RX KITPROG_RX
 
-static cyhal_i2c_t cyhal_i2c;
+/* Wait time for PASCO2 ready (milliseconds) */
+#define WAIT_PASCO2_RDY_MS          	(2000)
 
-#define I2C_MASTER_FREQUENCY (100000U)
+/* The CO2 concentration value acquired by the sensor depends on the external atmospheric pressure.
+   To compensate for this effect, pressure values can be acquired from a pressure sensor such as an
+   Infineon XENSIV&trade; DPS3xx. (https://github.com/Infineon/sensor-xensiv-dps3xx) */
+#define DEFAULT_PRESSURE_REF_HPA        (0x3F7)     /* Default atmospheric pressure to compensate for (hPa) */
 
-#define WAIT_SENSOR_RDY_MS          (5000)      /* Wait time for sensor ready (milliseconds) */
+/*I2C Peripheral Global Objects*/
+cyhal_i2c_t I2C_scb3;
+cyhal_i2c_cfg_t I2C_cfg;
 
-#define DEFAULT_PRESSURE_REF_HPA    (0x3F7)     /* Default atmospheric pressure to compensate for (hPa) */
-
-/*******************************************************************************
-* Global Variables
-*******************************************************************************/
-static xensiv_pasco2_t xensiv_pasco2;
-uint16_t ppm, pas_co2;
-cy_rslt_t result = CY_RSLT_SUCCESS;
-
-int i2c_init();
+/*PASCO2 Sensor Global Structure*/
+xensiv_pasco2_t xensiv_pasco2;
 
 int main(void)
 {
-	 int16_t error = 0;
+    cy_rslt_t result;
+    uint16_t pasco2ppm;
+    uint16_t serial_0;
+    uint16_t serial_1;
+    uint16_t serial_2;
+    int16_t scd_err = 0;
+    uint16_t scd_co2;
+    int32_t scd_temperature;
+    int32_t scd_humidity;
 
-	    /* Initialize the device and board peripherals */
-	    result = cybsp_init();
-	    CY_ASSERT(result == CY_RSLT_SUCCESS);
+    /* Initialize the device and board peripherals */
+    result = cybsp_init();
+    if (result != CY_RSLT_SUCCESS)
+    {
+    	CY_ASSERT(0);
+    }
 
-	    __enable_irq();
+    /* Enable global interrupts */
+    __enable_irq();
 
-	    /* Initialize retarget-io to use the debug UART port. */
-	     result = cy_retarget_io_init(CYBSP_DEBUG_UART_TX, CYBSP_DEBUG_UART_RX, CY_RETARGET_IO_BAUDRATE);
-	     CY_ASSERT(result == CY_RSLT_SUCCESS);
+    /*Enable debug output via KitProg UART*/
+    result = cy_retarget_io_init( KITPROG_TX, KITPROG_RX, CY_RETARGET_IO_BAUDRATE);
+    if (result != CY_RSLT_SUCCESS)
+    {
+    	CY_ASSERT(0);
+    }
+    printf("\x1b[2J\x1b[;H");
 
-	     i2c_init();
+    /*Initialize LEDs*/
+    result = cyhal_gpio_init( LED1, CYHAL_GPIO_DIR_OUTPUT, CYHAL_GPIO_DRIVE_STRONG, CYBSP_LED_STATE_OFF);
+    if (result != CY_RSLT_SUCCESS)
+    {
+    	CY_ASSERT(0);
+    }
+    result = cyhal_gpio_init( LED2, CYHAL_GPIO_DIR_OUTPUT, CYHAL_GPIO_DRIVE_STRONG, CYBSP_LED_STATE_OFF);
+    if (result != CY_RSLT_SUCCESS)
+    {
+    	CY_ASSERT(0);
+    }
 
-		 printf("\x1b[2J\x1b[;H");
-	     printf("Powered by RUTRONIK\r\n");
-	     printf("RUT CO2 BOARD TEST EXAMPLE \r\n");
-	     printf("Measuring interval: 10 seconds \r\n");
+    /*I2C Peripheral Configuration*/
+    I2C_cfg.is_slave = false;
+    I2C_cfg.address = 0;
+    I2C_cfg.frequencyhal_hz = 100000UL;
+    result = cyhal_i2c_init(&I2C_scb3, ARDU_SDA, ARDU_SCL, NULL);
+    if (result != CY_RSLT_SUCCESS)
+    {
+    	printf("I2C peripheral initialization error.\r\n");
+    	CY_ASSERT(0);
+    }
+    result = cyhal_i2c_configure(&I2C_scb3, &I2C_cfg);
+    if (result != CY_RSLT_SUCCESS)
+    {
+    	printf("I2C peripheral configuration error.\r\n");
+    	CY_ASSERT(0);
+    }
+    printf("I2C peripheral ready.\r\n");
+    CyDelay(WAIT_PASCO2_RDY_MS);
 
+    /* Initialize PAS CO2 sensor with default parameter values */
+    result = xensiv_pasco2_mtb_init_i2c(&xensiv_pasco2, &I2C_scb3);
+    if (result != CY_RSLT_SUCCESS)
+    {
+        printf("PAS CO2 device initialization error.\r\n");
+        CY_ASSERT(0);
+    }
+    printf("PAS CO2 device initialized successfully.\r\n");
 
-	     /* Initialize PAS CO2 sensor with default parameter values */
-	         result = xensiv_pasco2_mtb_init_i2c(&xensiv_pasco2, &cyhal_i2c);
-	         if (result != CY_RSLT_SUCCESS)
-	         {
-	             printf("PAS CO2 device initialization error \r\n");
-	             CY_ASSERT(0);
-	         }
-	         else {
-		        printf("PAS CO2 sensor is online \r\n");
-	         }
+    /* Clean up potential SCD40 states */
+    scd4x_wake_up();
+    scd4x_stop_periodic_measurement();
+    scd4x_reinit();
 
-	    /* Initialize PAS CO2 sensor */
+    /* Read the serial number of the SCD4x sensor attached*/
+    scd_err = scd4x_get_serial_number(&serial_0, &serial_1, &serial_2);
+    if (scd_err)
+    {
+        printf("Error reading SCD4X serial number.\r\n");
+    }
+    else
+    {
+        printf("SCD4X sensor is online, the serial number is: " );
+        printf("0x%X", serial_0);
+        printf("%X", serial_1);
+        printf("%X\r\n", serial_2);
+    }
 
-	     cyhal_system_delay_ms(WAIT_SENSOR_RDY_MS);
+    /* Start periodic measurement of the sensor*/
+    scd_err = scd4x_start_periodic_measurement();
+    if (!scd_err)
+    {
+        printf("SCD4X periodic measurement started.\r\n");
+    }
+    else
+    {
+        printf("Could not start the periodic measurement of the SCD4X.\r\n");
+        CY_ASSERT(0);
+    }
 
-	    // Clean up potential SCD40 states
-	    scd4x_wake_up();
-	    scd4x_stop_periodic_measurement();
-	    scd4x_reinit();
+    for (;;)
+    {
+    	/*Read the data from PAS CO2*/
+        result = xensiv_pasco2_mtb_read(&xensiv_pasco2, DEFAULT_PRESSURE_REF_HPA, &pasco2ppm);
+        if (result == CY_RSLT_SUCCESS)
+        {
+            printf("Infineon PAS CO2 %d ppm.\r\n", pasco2ppm);
+        }
+        cyhal_system_delay_ms(10);
 
-	    uint16_t serial_0;
-	    uint16_t serial_1;
-	    uint16_t serial_2;
-	    error = scd4x_get_serial_number(&serial_0, &serial_1, &serial_2);
-	    if (error) {
-	        printf("Error executing scd4x_get_serial_number(): %i\r\n", error);
-	    } else {
-	        printf("SCD4X sensor is online \r\n");
-	    }
-
-	    // Start Measurement
-
-	    error = scd4x_start_periodic_measurement();
-	    if (error) {
-	        printf("Error executing scd4x_start_periodic_measurement(): %i\r\n",
-	               error);
-	    }
-
-	    printf("Start first meausrement in 5 sec. ...\r\n");
-
-	    uint16_t co2;
-	    int32_t temperature;
-	    int32_t humidity, count=0;
-	    for (;;) {
-	            // Read Measurement
-
-	        cyhal_system_delay_ms(WAIT_SENSOR_RDY_MS);
-            printf("\x1b[2J\x1b[;H"); // clear terminal
-            count++;
-            printf("     COUNT: %d \r\n", (int)count);
-
-            result = xensiv_pasco2_mtb_read(&xensiv_pasco2, DEFAULT_PRESSURE_REF_HPA, &ppm);
-            if (result == CY_RSLT_SUCCESS)
-            {
-            	pas_co2=ppm;
-            }
-
-            	printf("    PAS CO2: %u ppm\r\n", pas_co2);
-
-
-	            error = scd4x_read_measurement(&co2, &temperature, &humidity);
-	            if (error) {
-	                printf("Error executing scd4x_read_measurement(): %i \r\n", error);
-	            } else if (co2 == 0) {
-	                printf("Invalid sample detected, skipping.\r\n");
-	            } else {
-
-	            	//float h=(humidity/1000);
-	                printf("  SDC4X CO2: %u ppm\r\n", co2);
-	                printf("Temperature: %.2f °C\r\n", (float)temperature/1000);
-	                printf("   Humidity: %.2f RH\r\n", (float)humidity/1000);
-		            sensirion_i2c_hal_sleep_usec(10000000);
-	            }
-	        }
-
-
-
-    return 0;
-}
-int i2c_init()
-{
-
-	 cyhal_i2c_cfg_t i2c_master_config = {CYHAL_I2C_MODE_MASTER,
-	                                         0,
-	                                         I2C_MASTER_FREQUENCY};
-
-	    result = cyhal_i2c_init(&cyhal_i2c, CYBSP_I2C_SDA, CYBSP_I2C_SCL, NULL);
-	    CY_ASSERT(result == CY_RSLT_SUCCESS);
-
-	    result = cyhal_i2c_configure(&cyhal_i2c, &i2c_master_config);
-	    CY_ASSERT(result == CY_RSLT_SUCCESS);
-	    return (int)result;
-}
-int8_t sensirion_i2c_hal_read(uint8_t address, uint8_t* data, uint16_t count) {
-
-	return (int8_t)cyhal_i2c_master_read(&cyhal_i2c,(uint16_t)address, data, count, 100, false);
-
-}
-
-
-int8_t sensirion_i2c_hal_write(uint8_t address, const uint8_t* data,
-                               uint16_t count) {
-	return (int8_t)cyhal_i2c_master_write(&cyhal_i2c,(uint16_t)address, data, count, 100, false);
+        /*Read the data from SDC4X*/
+        scd_err = scd4x_read_measurement(&scd_co2, &scd_temperature, &scd_humidity);
+        if (!scd_err)
+        {
+            printf("Sensirion SDC4X CO2: %u ppm ", scd_co2);
+            printf("Temperature: %.2f\xB0 C ", (float)scd_temperature/1000);
+            printf("Humidity: %.2f%% RH\r\n", (float)scd_humidity/1000);
+            sensirion_i2c_hal_sleep_usec(10000000);
+        }
+    }
 }
 
+/* [] END OF FILE */
