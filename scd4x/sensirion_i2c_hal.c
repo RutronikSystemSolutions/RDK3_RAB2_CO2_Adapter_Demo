@@ -37,7 +37,7 @@
 #include "cybsp.h"
 #include "cy_pdl.h"
 
-extern I2C_scb3;
+extern cyhal_i2c_t I2C_scb3;
 
 /*
  * INSTRUCTIONS
